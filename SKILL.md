@@ -35,11 +35,20 @@ Without `--transcribe`, `path` is null for WhatsApp (not downloaded yet) and
 
 ## Backends and models
 
-Apple Silicon: `mlx-whisper` with `mlx-community/whisper-large-v3-turbo`
-(weights cached in `~/.cache/huggingface`, a few seconds per minute of audio
-once warm). Elsewhere: `faster-whisper` (CTranslate2, CPU int8) with
-`deepdml/faster-whisper-large-v3-turbo-ct2`. `--model` overrides either. On
-Linux, `.m4a` needs `ffmpeg` on PATH; Ogg/Opus voice notes do not.
+`--backend whisper|parakeet|auto` (default `auto`):
+
+| backend  | model                          | Apple Silicon  | Linux CPU            | traits                                             |
+| -------- | ------------------------------ | -------------- | -------------------- | -------------------------------------------------- |
+| whisper  | Whisper large-v3-turbo         | mlx-whisper    | faster-whisper int8  | honours `--glossary`, fuller transcripts, slower   |
+| parakeet | NVIDIA parakeet-tdt-0.6b-v3    | parakeet-mlx   | onnx-asr int8        | 2-5x faster, better punctuation, no glossary       |
+
+`auto` is whisper on Apple Silicon (both take seconds there) and parakeet on a
+CPU-only box (Whisper turbo ran at 3x real time on 2 vCPU). Measured on the same
+French memos: equal accuracy overall, different failures. Whisper spells glossary
+words right (T'choupi, Zama); Parakeet once dropped a memo's closing sentence.
+`--model` overrides the weights of either backend. Weights are cached in
+`~/.cache/huggingface`. On Linux, `.m4a` needs `ffmpeg` on PATH; Ogg/Opus voice
+notes do not.
 
 ## Glossary
 

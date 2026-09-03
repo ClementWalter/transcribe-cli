@@ -98,8 +98,30 @@ def test_telegram_items_keep_audio_only(monkeypatch, tmp_path):
     assert [it["id"] for it in tc.telegram_items("me", 10, None, tmp_path)] == ["audio_1.ogg"]
 
 
-def test_default_model_matches_platform():
-    assert tc.default_model() == (tc.MLX_MODEL if tc.IS_APPLE_SILICON else tc.CT2_MODEL)
+def test_auto_backend_is_whisper_on_apple_silicon():
+    assert tc.resolve_backend("auto", apple_silicon=True) == "whisper"
+
+
+def test_auto_backend_is_parakeet_on_cpu_box():
+    assert tc.resolve_backend(None, apple_silicon=False) == "parakeet"
+
+
+def test_explicit_backend_is_kept():
+    assert tc.resolve_backend("parakeet", apple_silicon=True) == "parakeet"
+
+
+def test_unknown_backend_fails_loud():
+    import click
+    with pytest.raises(click.ClickException):
+        tc.resolve_backend("vosk")
+
+
+def test_default_parakeet_model_per_platform():
+    assert (tc.default_model("parakeet", True), tc.default_model("parakeet", False)) == (tc.PARAKEET_MLX_MODEL, tc.PARAKEET_ONNX_MODEL)
+
+
+def test_default_whisper_model_per_platform():
+    assert (tc.default_model("whisper", True), tc.default_model("whisper", False)) == (tc.MLX_MODEL, tc.CT2_MODEL)
 
 
 def test_glossary_inline_or_file(tmp_path):

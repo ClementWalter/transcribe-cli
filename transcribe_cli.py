@@ -7,7 +7,9 @@
 #     "soundfile",
 #     "scipy",
 #     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+#     "parakeet-mlx>=0.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
 #     "faster-whisper>=1.1; sys_platform != 'darwin' or platform_machine != 'arm64'",
+#     "onnx-asr[cpu,hub]>=0.12; sys_platform != 'darwin' or platform_machine != 'arm64'",
 # ]
 # ///
 """Speech to text for the audio the user records or receives: one CLI, several sources.
@@ -25,13 +27,20 @@ Each source lists items as JSON ({id, source, ts, duration, title, path}) and
 when needed. Ids are stable per source (Voice Memos uuid, WhatsApp msg_id,
 Telegram file name) so a caller can keep its own "seen" state.
 
-Backends: mlx-whisper on Apple Silicon, faster-whisper (CTranslate2, CPU int8)
-everywhere else, both with the same large-v3-turbo weights, so the output is
-comparable on a Mac and on a Linux box. Decoding: CoreAudio's afconvert on
-macOS, libsndfile (soundfile) for Ogg/Opus voice notes and on Linux.
+Two speech models, `--backend whisper|parakeet|auto`:
 
-A glossary file (one line of comma-separated domain words) is fed to Whisper
-as its initial prompt; set TRANSCRIBE_GLOSSARY or pass --glossary.
+  whisper    Whisper large-v3-turbo. Honours --glossary (domain words as the
+             initial prompt), fuller transcripts. mlx-whisper on Apple Silicon,
+             faster-whisper (CTranslate2, CPU int8) elsewhere.
+  parakeet   NVIDIA parakeet-tdt-0.6b-v3, 25 European languages. Several times
+             faster, better punctuation, no glossary. parakeet-mlx on Apple
+             Silicon, onnx-asr (ONNX Runtime, int8) elsewhere.
+  auto       whisper on Apple Silicon where both take seconds, parakeet on a
+             CPU-only box where Whisper is several times slower than real time.
+
+Decoding: CoreAudio's afconvert on macOS, libsndfile (soundfile) for Ogg/Opus
+voice notes and on Linux. A glossary is a file or an inline comma-separated
+list; set TRANSCRIBE_GLOSSARY or pass --glossary.
 """
 
 from __future__ import annotations
@@ -57,6 +66,9 @@ SAMPLE_RATE = 16_000
 IS_APPLE_SILICON = sys.platform == "darwin" and platform.machine() == "arm64"
 MLX_MODEL = "mlx-community/whisper-large-v3-turbo"
 CT2_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
+PARAKEET_MLX_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+PARAKEET_ONNX_MODEL = "nemo-parakeet-tdt-0.6b-v3"
+BACKENDS = ("auto", "whisper", "parakeet")
 AUDIO_SUFFIXES = {".m4a", ".mp3", ".wav", ".ogg", ".oga", ".opus", ".flac", ".aac", ".mp4", ".caf", ".aiff"}
 LIBSNDFILE_SUFFIXES = {".ogg", ".oga", ".opus", ".flac", ".wav", ".aiff", ".mp3"}
 
@@ -127,12 +139,22 @@ def decode_audio(path: pathlib.Path) -> np.ndarray:
 
 # --- transcription -----------------------------------------------------------
 
-def default_model() -> str:
-    return MLX_MODEL if IS_APPLE_SILICON else CT2_MODEL
+def resolve_backend(option: str | None, apple_silicon: bool = IS_APPLE_SILICON) -> str:
+    """`auto` picks the model that is fast enough on this hardware."""
+    if option in (None, "auto"):
+        return "whisper" if apple_silicon else "parakeet"
+    if option not in BACKENDS:
+        raise click.ClickException(f"unknown backend {option!r}; choose from {', '.join(BACKENDS)}")
+    return option
 
 
-def transcribe_audio(audio: np.ndarray, model: str, glossary: str | None) -> dict:
-    """Run Whisper on 16 kHz mono samples; same result shape whatever the backend."""
+def default_model(backend: str, apple_silicon: bool = IS_APPLE_SILICON) -> str:
+    if backend == "parakeet":
+        return PARAKEET_MLX_MODEL if apple_silicon else PARAKEET_ONNX_MODEL
+    return MLX_MODEL if apple_silicon else CT2_MODEL
+
+
+def transcribe_whisper(audio: np.ndarray, model: str, glossary: str | None) -> dict:
     if IS_APPLE_SILICON and not model.startswith("deepdml/"):
         import mlx_whisper
 
@@ -148,9 +170,38 @@ def transcribe_audio(audio: np.ndarray, model: str, glossary: str | None) -> dic
     return {"text": " ".join(s["text"] for s in segments).strip(), "language": info.language, "segments": segments, "backend": "faster-whisper", "model": model}
 
 
-def transcribe_file(path: pathlib.Path, model: str | None = None, glossary: str | None = None) -> dict:
+def transcribe_parakeet(audio: np.ndarray, model: str) -> dict:
+    """Parakeet TDT v3: no prompt, no language id in the output; sentence timings on MLX only."""
+    if IS_APPLE_SILICON and not model.startswith("nemo-"):
+        import mlx.core as mx
+        from parakeet_mlx import from_pretrained
+        from parakeet_mlx.audio import get_logmel
+
+        engine = from_pretrained(model)
+        # float32 in: the mel front end mis-shapes bfloat16 input.
+        result = engine.generate(get_logmel(mx.array(audio), engine.preprocessor_config))[0]
+        segments = [{"start": s.start, "end": s.end, "text": s.text.strip()} for s in getattr(result, "sentences", [])]
+        return {"text": result.text.strip(), "language": None, "segments": segments, "backend": "parakeet-mlx", "model": model}
+    import onnx_asr
+
+    engine = onnx_asr.load_model(model, quantization="int8", providers=["CPUExecutionProvider"])
+    text = engine.recognize(audio.astype(np.float32), sample_rate=SAMPLE_RATE)
+    return {"text": str(text).strip(), "language": None, "segments": [], "backend": "onnx-asr", "model": model}
+
+
+def transcribe_audio(audio: np.ndarray, backend: str, model: str | None, glossary: str | None) -> dict:
+    """16 kHz mono samples in, the same result shape out whatever the model."""
+    model = model or default_model(backend)
+    if backend == "parakeet":
+        if glossary:
+            log.warning("parakeet has no prompt: the glossary is ignored")
+        return transcribe_parakeet(audio, model)
+    return transcribe_whisper(audio, model, glossary)
+
+
+def transcribe_file(path: pathlib.Path, model: str | None = None, glossary: str | None = None, backend: str | None = None) -> dict:
     audio = decode_audio(path)
-    result = transcribe_audio(audio, model or default_model(), glossary)
+    result = transcribe_audio(audio, resolve_backend(backend), model, glossary)
     result["duration"] = round(len(audio) / SAMPLE_RATE, 1)
     result["path"] = str(path)
     return result
@@ -273,11 +324,11 @@ def emit(items: list[dict], as_json: bool) -> None:
             click.echo(f"    {it['text']}")
 
 
-def transcribe_items(items: list[dict], fetch, model: str | None, glossary: str | None) -> None:
+def transcribe_items(items: list[dict], fetch, model: str | None, glossary: str | None, backend: str | None = None) -> None:
     for it in items:
         if not it.get("path"):
             it["path"] = str(fetch(it))
-        result = transcribe_file(pathlib.Path(it["path"]), model, glossary)
+        result = transcribe_file(pathlib.Path(it["path"]), model, glossary, backend)
         it.update(text=result["text"], language=result["language"], duration=result["duration"] or it["duration"], backend=result["backend"])
 
 
@@ -288,7 +339,8 @@ def cli(verbose: bool) -> None:
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(name)s %(levelname)s %(message)s", stream=sys.stderr)
 
 
-model_option = click.option("--model", default=None, help=f"Whisper weights (default {MLX_MODEL} on Apple Silicon, {CT2_MODEL} elsewhere)")
+backend_option = click.option("--backend", default="auto", type=click.Choice(BACKENDS), show_default=True, help="whisper (glossary, fuller) or parakeet (faster); auto = whisper on Apple Silicon, parakeet elsewhere")
+model_option = click.option("--model", default=None, help="weights to use instead of the backend's default (an HF repo for MLX/CTranslate2, an onnx-asr name on Linux)")
 glossary_option = click.option("--glossary", default=None, help="file or inline comma-separated domain words for Whisper's initial prompt (or TRANSCRIBE_GLOSSARY)")
 json_option = click.option("--json", "as_json", is_flag=True, help="machine-readable output")
 since_option = click.option("--since", default=None, help="ISO date/datetime; only items at/after it (UTC if no tz)")
@@ -297,26 +349,28 @@ transcribe_option = click.option("--transcribe/--no-transcribe", default=False, 
 
 @cli.command()
 @click.argument("audio", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
+@backend_option
 @model_option
 @glossary_option
 @json_option
-def file(audio: pathlib.Path, model: str | None, glossary: str | None, as_json: bool) -> None:
+def file(audio: pathlib.Path, backend: str, model: str | None, glossary: str | None, as_json: bool) -> None:
     """Transcribe one audio file (m4a, ogg/opus, mp3, wav, ...)."""
-    result = transcribe_file(audio, model, load_glossary(glossary))
+    result = transcribe_file(audio, model, load_glossary(glossary), backend)
     click.echo(json.dumps(result, ensure_ascii=False, indent=2) if as_json else result["text"])
 
 
 @cli.command()
 @since_option
 @transcribe_option
+@backend_option
 @model_option
 @glossary_option
 @json_option
-def voicememos(since: str | None, transcribe: bool, model: str | None, glossary: str | None, as_json: bool) -> None:
+def voicememos(since: str | None, transcribe: bool, backend: str, model: str | None, glossary: str | None, as_json: bool) -> None:
     """List Apple Voice Memos on this Mac (macOS only), optionally transcribed."""
     items = [it for it in voicememos_items(since=parse_since(since)) if it["available"] or not transcribe]
     if transcribe:
-        transcribe_items(items, lambda it: pathlib.Path(it["path"]), model, load_glossary(glossary))
+        transcribe_items(items, lambda it: pathlib.Path(it["path"]), model, load_glossary(glossary), backend)
     emit(items, as_json)
 
 
@@ -326,15 +380,16 @@ def voicememos(since: str | None, transcribe: bool, model: str | None, glossary:
 @click.option("--out", default=None, help="where downloaded audio goes (default: a temp dir)")
 @since_option
 @transcribe_option
+@backend_option
 @model_option
 @glossary_option
 @json_option
-def whatsapp(chat: str, limit: int, out: str | None, since: str | None, transcribe: bool, model: str | None, glossary: str | None, as_json: bool) -> None:
+def whatsapp(chat: str, limit: int, out: str | None, since: str | None, transcribe: bool, backend: str, model: str | None, glossary: str | None, as_json: bool) -> None:
     """List the audio messages of a WhatsApp chat (name or JID), optionally downloaded and transcribed."""
     items = whatsapp_items(chat, limit, parse_since(since))
     if transcribe:
         out_dir = pathlib.Path(out) if out else pathlib.Path(tempfile.mkdtemp(prefix="transcribe-wa-"))
-        transcribe_items(items, lambda it: whatsapp_fetch(it, out_dir), model, load_glossary(glossary))
+        transcribe_items(items, lambda it: whatsapp_fetch(it, out_dir), model, load_glossary(glossary), backend)
     emit(items, as_json)
 
 
@@ -344,15 +399,16 @@ def whatsapp(chat: str, limit: int, out: str | None, since: str | None, transcri
 @click.option("--out", default=None, help="where downloaded audio goes (default: a temp dir)")
 @since_option
 @transcribe_option
+@backend_option
 @model_option
 @glossary_option
 @json_option
-def telegram(chat: str, limit: int, out: str | None, since: str | None, transcribe: bool, model: str | None, glossary: str | None, as_json: bool) -> None:
+def telegram(chat: str, limit: int, out: str | None, since: str | None, transcribe: bool, backend: str, model: str | None, glossary: str | None, as_json: bool) -> None:
     """List the audio attachments of a Telegram chat (downloaded by `tg`), optionally transcribed."""
     out_dir = pathlib.Path(out) if out else pathlib.Path(tempfile.mkdtemp(prefix="transcribe-tg-"))
     items = telegram_items(chat, limit, parse_since(since), out_dir)
     if transcribe:
-        transcribe_items(items, lambda it: pathlib.Path(it["path"]), model, load_glossary(glossary))
+        transcribe_items(items, lambda it: pathlib.Path(it["path"]), model, load_glossary(glossary), backend)
     emit(items, as_json)
 
 
