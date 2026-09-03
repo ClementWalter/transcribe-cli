@@ -1,8 +1,10 @@
 # transcribe-cli
 
 Local speech to text over the audio you record or receive: Apple Voice Memos,
-WhatsApp voice notes, Telegram voice messages, or any file. Whisper
-large-v3-turbo on Apple Silicon (mlx-whisper) and Linux (faster-whisper).
+WhatsApp voice notes, Telegram voice messages, or any file. Two local models,
+`--backend whisper|parakeet|auto`: Whisper large-v3-turbo (glossary) and NVIDIA
+parakeet-tdt-0.6b-v3 (faster), on MLX (Apple Silicon) or CTranslate2 / ONNX
+Runtime (Linux CPU).
 
 ```bash
 bin/transcribe file note.m4a
