@@ -93,9 +93,15 @@ def test_whatsapp_items_fail_loud_when_wa_fails(monkeypatch):
 
 
 def test_telegram_items_keep_audio_only(monkeypatch, tmp_path):
-    saved = [{"ts": "2026-09-03T10:00:00", "file": str(tmp_path / "audio_1.ogg"), "caption": ""}, {"ts": "2026-09-03T10:01:00", "file": str(tmp_path / "photo.jpg"), "caption": ""}]
+    saved = [{"ts": "2026-09-03T10:00:00", "id": 175270, "reply_to": None, "file": str(tmp_path / "audio_1.ogg"), "caption": ""}, {"ts": "2026-09-03T10:01:00", "id": 175271, "file": str(tmp_path / "photo.jpg"), "caption": ""}]
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: completed(json.dumps(saved)))
-    assert [it["id"] for it in tc.telegram_items("me", 10, None, tmp_path)] == ["audio_1.ogg"]
+    assert [it["id"] for it in tc.telegram_items("me", 10, None, tmp_path)] == ["175270"]
+
+
+def test_telegram_items_fall_back_to_file_name_without_id(monkeypatch, tmp_path):
+    saved = [{"ts": "2026-09-03T10:00:00", "file": str(tmp_path / "audio_1.ogg"), "caption": ""}]
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: completed(json.dumps(saved)))
+    assert tc.telegram_items("me", 10, None, tmp_path)[0]["id"] == "audio_1.ogg"
 
 
 def test_auto_backend_is_whisper_on_apple_silicon():

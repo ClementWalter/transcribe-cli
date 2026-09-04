@@ -296,9 +296,10 @@ def telegram_items(chat: str, limit: int, since: dt.datetime | None, out_dir: pa
         if path.suffix.lower() not in AUDIO_SUFFIXES:
             continue
         when = dt.datetime.fromisoformat(saved["ts"])
+        # The Telegram message id is the stable handle (tg-cli >= 2026-09-04); older tg falls back to the file name.
         items.append({
-            "id": path.name, "source": "telegram", "chat": chat, "ts": int(when.timestamp()), "duration": 0.0,
-            "title": saved.get("caption") or "Vocal Telegram", "path": str(path),
+            "id": str(saved.get("id") or path.name), "source": "telegram", "chat": chat, "ts": int(when.timestamp()), "duration": 0.0,
+            "title": saved.get("caption") or "Vocal Telegram", "path": str(path), "reply_to": saved.get("reply_to"),
         })
     return items
 
