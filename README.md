@@ -1,5 +1,7 @@
 # transcribe-cli
 
+**Visibility: public.**
+
 Local speech to text over the audio you record or receive: Apple Voice Memos,
 WhatsApp voice notes, Telegram voice messages, or any file. Two local models,
 `--backend whisper|parakeet|auto`: Whisper large-v3-turbo (glossary) and NVIDIA
@@ -8,11 +10,11 @@ Runtime (Linux CPU).
 
 ```bash
 bin/transcribe file note.m4a
-bin/transcribe whatsapp "Clément Walter" --transcribe --json
+bin/transcribe whatsapp "Alice Example" --transcribe --json
 ```
 
 See `SKILL.md` for the full command reference. Tests:
 
 ```bash
-PYTHONPATH=. uv run --with pytest --with click --with numpy --with scipy --with soundfile pytest -q tests
+uv run --script tests/test_transcribe_cli.py
 ```

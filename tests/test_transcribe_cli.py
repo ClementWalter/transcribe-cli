@@ -1,6 +1,22 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "click==8.3.3",
+#     "numpy==2.4.6; python_version < '3.12'",
+#     "numpy==2.5.4; python_version >= '3.12'",
+#     "scipy==1.17.1; python_version < '3.12'",
+#     "scipy==1.18.1; python_version >= '3.12'",
+#     "soundfile==0.14.0",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Pure helpers and source adapters of transcribe-cli, with the external CLIs stubbed.
 
-Run from the repo root: PYTHONPATH=. uv run --with pytest --with click --with numpy --with scipy --with soundfile pytest -q tests
+Run: uv run --script tests/test_transcribe_cli.py
 """
 
 from __future__ import annotations
@@ -10,10 +26,12 @@ import json
 import pathlib
 import struct
 import subprocess
+import sys
 
 import numpy as np
 import pytest
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import transcribe_cli as tc
 
 
@@ -134,3 +152,7 @@ def test_glossary_inline_or_file(tmp_path):
     f = tmp_path / "g.txt"
     f.write_text("Zama, Slack\n")
     assert tc.load_glossary(str(f)) == "Zama, Slack" and tc.load_glossary("a, b") == "a, b"
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))
