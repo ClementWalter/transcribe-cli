@@ -2,15 +2,20 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "click>=8.1",
-#     "numpy",
-#     "soundfile",
-#     "scipy",
-#     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
-#     "parakeet-mlx>=0.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
-#     "faster-whisper>=1.1; sys_platform != 'darwin' or platform_machine != 'arm64'",
-#     "onnx-asr[cpu,hub]>=0.12; sys_platform != 'darwin' or platform_machine != 'arm64'",
+#     "click==8.3.3",
+#     "numpy==2.4.6; python_version < '3.12'",
+#     "numpy==2.5.4; python_version >= '3.12'",
+#     "soundfile==0.14.0",
+#     "scipy==1.17.1; python_version < '3.12'",
+#     "scipy==1.18.1; python_version >= '3.12'",
+#     "mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+#     "parakeet-mlx==0.5.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+#     "faster-whisper==1.2.1; sys_platform != 'darwin' or platform_machine != 'arm64'",
+#     "onnx-asr[cpu,hub]==0.12.0; sys_platform != 'darwin' or platform_machine != 'arm64'",
 # ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
 # ///
 """Speech to text for the audio the user records or receives: one CLI, several sources.
 
@@ -333,7 +338,10 @@ def transcribe_items(items: list[dict], fetch, model: str | None, glossary: str 
         it.update(text=result["text"], language=result["language"], duration=result["duration"] or it["duration"], backend=result["backend"])
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog="\b\nExamples:\n  transcribe file note.m4a\n  transcribe voicememos --since 2026-09-01 --transcribe --json\n  transcribe whatsapp \"Alice Example\" --transcribe --json",
+)
 @click.option("-v", "--verbose", is_flag=True)
 def cli(verbose: bool) -> None:
     """Local speech to text over Voice Memos, WhatsApp and Telegram recordings."""
@@ -348,7 +356,7 @@ since_option = click.option("--since", default=None, help="ISO date/datetime; on
 transcribe_option = click.option("--transcribe/--no-transcribe", default=False, help="also fetch and transcribe each item")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  transcribe file note.m4a\n  transcribe file note.ogg --backend parakeet --json\n  transcribe file memo.m4a --glossary \"Zama, FHE\"")
 @click.argument("audio", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
 @backend_option
 @model_option
@@ -360,7 +368,7 @@ def file(audio: pathlib.Path, backend: str, model: str | None, glossary: str | N
     click.echo(json.dumps(result, ensure_ascii=False, indent=2) if as_json else result["text"])
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  transcribe voicememos --since 2026-09-01\n  transcribe voicememos --since 2026-09-01 --transcribe --json")
 @since_option
 @transcribe_option
 @backend_option
@@ -375,7 +383,7 @@ def voicememos(since: str | None, transcribe: bool, backend: str, model: str | N
     emit(items, as_json)
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  transcribe whatsapp \"Alice Example\" --limit 20\n  transcribe whatsapp \"Alice Example\" --transcribe --out ~/audio --json")
 @click.argument("chat")
 @click.option("--limit", default=80, help="recent messages to scan")
 @click.option("--out", default=None, help="where downloaded audio goes (default: a temp dir)")
@@ -394,7 +402,7 @@ def whatsapp(chat: str, limit: int, out: str | None, since: str | None, transcri
     emit(items, as_json)
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  transcribe telegram \"Alice Example\" --limit 50\n  transcribe telegram \"Alice Example\" --since 2026-10-01 --transcribe --json")
 @click.argument("chat")
 @click.option("--limit", default=50, help="recent messages to scan")
 @click.option("--out", default=None, help="where downloaded audio goes (default: a temp dir)")
