@@ -2,6 +2,8 @@
 
 **Visibility: public.**
 
+**Extension: not shipped** as a Claude Desktop extension: its local speech models are large downloads meant for a terminal setup.
+
 Local speech to text over the audio you record or receive: Apple Voice Memos,
 WhatsApp voice notes, Telegram voice messages, or any file. Two local models,
 `--backend whisper|parakeet|auto`: Whisper large-v3-turbo (glossary) and NVIDIA
